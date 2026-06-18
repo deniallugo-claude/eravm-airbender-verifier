@@ -149,18 +149,28 @@ fn host_proves_fri_then_snark() {
     //    prover verifies the proof against that VK internally, and rejects a
     //    zero output (failed guest verification/commitment). The default config
     //    keeps the backend's own host-buffer pool sizing.
-    println!("[test] Building GPU FRI prover against committed VK...");
-    let prover = build_fri_prover(
-        &guest_dist_dir(),
-        &fri_vk_path(),
-        security,
-        FriProverConfig::default(),
-    )
-    .expect("failed to build GPU FRI prover");
-    println!("[test] Proving FRI for batch {}...", batch.number);
-    let output = prover
-        .prove_input(batch.number, words.words())
-        .expect("FRI proving failed");
+    //
+    //    Scope the prover so it is dropped the moment proving is done: the FRI
+    //    prover and the SNARK wrapper both allocate from shivini's shared
+    //    static device-memory pool, and the FRI prover claims nearly the whole
+    //    GPU. Holding it alive starves the in-process SNARK wrapper (it OOMs in
+    //    `get_risc_wrapper_setup`); dropping it returns the device memory to the
+    //    pool before wrapping. (The old server test sidestepped this by running
+    //    FRI and SNARK in two separate processes.)
+    let output = {
+        println!("[test] Building GPU FRI prover against committed VK...");
+        let prover = build_fri_prover(
+            &guest_dist_dir(),
+            &fri_vk_path(),
+            security,
+            FriProverConfig::default(),
+        )
+        .expect("failed to build GPU FRI prover");
+        println!("[test] Proving FRI for batch {}...", batch.number);
+        prover
+            .prove_input(batch.number, words.words())
+            .expect("FRI proving failed")
+    };
 
     // 4. The proven guest output must match the native public input.
     assert_eq!(
